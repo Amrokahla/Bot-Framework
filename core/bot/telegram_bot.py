@@ -53,7 +53,7 @@ class TelegramBot:
         # Initialize core components
         from core.bot_authuntcator.access_control import AccessControl
         from core.bot_authuntcator.user_manager import UserManager
-        from core.bot.message_handler import MessageHandler
+        from core.bot.handlers import MessageHandler
         from core.bot_authuntcator.role_manager import RoleManager
         from core.plugins.plugin_manager import PluginManager
 
