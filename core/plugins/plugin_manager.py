@@ -45,7 +45,7 @@ class PluginManager:
                         print(f"⚠️ Failed to load plugin '{entry}': {e}")
 
     def activate_plugin(self, name: str):
-        """Activate a specific plugin."""
+        """Activate a specific plugin (instantiate only, actual activation happens after config is set)."""
         if name not in self.available_plugins:
             return f"❌ Plugin '{name}' not found."
 
@@ -54,7 +54,7 @@ class PluginManager:
 
         cls = self.available_plugins[name]
         plugin = cls(self.bot)
-        plugin.activate()
+        # Don't call plugin.activate() here - it will be called in main.py after config is set
         self.plugins[name] = plugin
 
         # Register plugin commands with MessageHandler if available

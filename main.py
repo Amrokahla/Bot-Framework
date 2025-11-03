@@ -34,6 +34,11 @@ def main():
             if pname in bot.plugins:
                 plugin = bot.plugins[pname]
                 plugin_cfg = client_cfg.get(pname, {})
+                # Set allowed_roles for all plugins
+                if "allowed_roles" in plugin_cfg:
+                    plugin.allowed_roles = plugin_cfg["allowed_roles"]
+                else:
+                    plugin.allowed_roles = ["admin", "superadmin"]  # Default to admin access
                 if pname == "llm":
                     if "bot_persona" in plugin_cfg:
                         plugin.set_bot_persona(plugin_cfg["bot_persona"])

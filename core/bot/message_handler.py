@@ -6,15 +6,6 @@ from core.bot_authuntcator.access_control import AccessControl
 logger = logging.getLogger(__name__)
 
 class MessageHandler:
-    def add_plugin_commands(self, plugin):
-        """Register commands from a single plugin after activation."""
-        if plugin.is_active() and hasattr(plugin, "commands"):
-            plugin_name = plugin.name()
-            for cmd, desc in plugin.commands().items():
-                cmd_name = cmd.lstrip("/").lower()
-                # Create a handler that routes to the correct plugin
-                handler = self._create_plugin_command_handler(plugin_name)
-                self.register_command(cmd_name, handler, "admin")
     """
     Core message routing and command handling system.
     Manages command registration and role-based access control.
@@ -27,17 +18,69 @@ class MessageHandler:
         self.command_registry: Dict[str, Dict] = {}
         self._register_system_commands()
 
+    def _get_minimum_role(self, allowed_roles):
+        """
+        Determine the minimum role required based on allowed_roles list.
+        
+        Args:
+            allowed_roles: List of allowed roles (e.g., ["admin", "superadmin"] or ["all"])
+            
+        Returns:
+            str or None: Minimum role required (None means no restriction)
+        """
+        if not allowed_roles:
+            return "admin"  # Default to admin if not specified
+        
+        # If "all" is in allowed_roles, no role restriction
+        if "all" in allowed_roles:
+            return None
+        
+        # Role hierarchy: superadmin > admin > user
+        role_hierarchy = {"user": 1, "admin": 2, "superadmin": 3}
+        
+        # Find the lowest role in the hierarchy
+        min_level = float('inf')
+        min_role = "admin"
+        
+        for role in allowed_roles:
+            role_lower = role.lower()
+            if role_lower in role_hierarchy:
+                level = role_hierarchy[role_lower]
+                if level < min_level:
+                    min_level = level
+                    min_role = role_lower
+        
+        return min_role
+
+    def add_plugin_commands(self, plugin):
+        """Register commands from a single plugin after activation."""
+        if plugin.is_active() and hasattr(plugin, "commands"):
+            plugin_name = plugin.name()
+            # Get allowed_roles from plugin config, default to admin
+            allowed_roles = getattr(plugin, "allowed_roles", ["admin", "superadmin"])
+            # Determine minimum role required
+            min_role = self._get_minimum_role(allowed_roles)
+            for cmd, desc in plugin.commands().items():
+                cmd_name = cmd.lstrip("/").lower()
+                # Create a handler that routes to the correct plugin
+                handler = self._create_plugin_command_handler(plugin_name)
+                self.register_command(cmd_name, handler, min_role)
+
     def register_all_plugin_commands(self):
         """Register commands from all active plugins after both plugin activation and MessageHandler construction."""
         active_plugins = getattr(self.bot, "active_plugins", [])
         if hasattr(self.bot, "plugins"):
             for pname, plugin in self.bot.plugins.items():
                 if pname in active_plugins and plugin.is_active() and hasattr(plugin, "commands"):
+                    # Get allowed_roles from plugin config, default to admin
+                    allowed_roles = getattr(plugin, "allowed_roles", ["admin", "superadmin"])
+                    # Determine minimum role required
+                    min_role = self._get_minimum_role(allowed_roles)
                     for cmd, desc in plugin.commands().items():
                         cmd_name = cmd.lstrip("/").lower()
                         # Create a handler that routes to the correct plugin
                         handler = self._create_plugin_command_handler(pname)
-                        self.register_command(cmd_name, handler, "admin")
+                        self.register_command(cmd_name, handler, min_role)
 
     def _register_plugin_commands(self):
         """Register commands from active plugins (e.g., LLM) after activation."""
@@ -45,11 +88,15 @@ class MessageHandler:
         if hasattr(self.bot, "plugins"):
             for pname, plugin in self.bot.plugins.items():
                 if pname in active_plugins and plugin.is_active() and hasattr(plugin, "commands"):
+                    # Get allowed_roles from plugin config, default to admin
+                    allowed_roles = getattr(plugin, "allowed_roles", ["admin", "superadmin"])
+                    # Determine minimum role required
+                    min_role = self._get_minimum_role(allowed_roles)
                     for cmd, desc in plugin.commands().items():
                         cmd_name = cmd.lstrip("/").lower()
                         # Create a handler that routes to the correct plugin
                         handler = self._create_plugin_command_handler(pname)
-                        self.register_command(cmd_name, handler, "admin")
+                        self.register_command(cmd_name, handler, min_role)
 
     def _register_system_commands(self):
         """Register built-in system commands."""
@@ -74,11 +121,15 @@ class MessageHandler:
         if hasattr(self.bot, "plugins"):
             for pname, plugin in self.bot.plugins.items():
                 if pname in active_plugins and plugin.is_active() and hasattr(plugin, "commands"):
+                    # Get allowed_roles from plugin config, default to admin
+                    allowed_roles = getattr(plugin, "allowed_roles", ["admin", "superadmin"])
+                    # Determine minimum role required
+                    min_role = self._get_minimum_role(allowed_roles)
                     for cmd, desc in plugin.commands().items():
                         cmd_name = cmd.lstrip("/").lower()
                         # Create a handler that routes to the correct plugin
                         handler = self._create_plugin_command_handler(pname)
-                        self.register_command(cmd_name, handler, "admin")
+                        self.register_command(cmd_name, handler, min_role)
 
     def _cmd_promote_user(self, message) -> None:
         """Promote a user to a higher role. Usage: /promote_user <user_id> <role>"""
@@ -262,6 +313,9 @@ class MessageHandler:
         logger = logging.getLogger(f"{plugin_name}_plugin_command")
         logger.info(f"Received {plugin_name} plugin command: {message.text}")
         
+        # Generic security message - same for all unauthorized/invalid access
+        security_message = "⚠️ This command either doesn't exist or you don't have permission to use it."
+        
         if hasattr(self.bot, "plugins") and plugin_name in self.bot.plugins:
             plugin = self.bot.plugins[plugin_name]
             logger.info(f"{plugin_name.capitalize()} plugin active: {plugin.is_active()}")
@@ -272,17 +326,70 @@ class MessageHandler:
                 args = parts[1:]
                 user_id = message.from_user.id
                 user_role = self.access_control.role_manager.get_role(user_id)
+                
+                # Check if user has permission based on plugin's allowed_roles
+                allowed_roles = getattr(plugin, "allowed_roles", ["admin", "superadmin"])
+                if not self._check_plugin_access(user_role, allowed_roles):
+                    logger.warning(f"User {user_id} (role: {user_role}) attempted to access {plugin_name} command but lacks permission")
+                    # Use generic security message to avoid revealing command details
+                    self.bot.send_message(message.chat.id, security_message)
+                    return
+                
                 logger.info(f"Routing command '{cmd}' with args {args} from user {user_id} (role: {user_role})")
                 
-                reply = plugin.handle_command(cmd, args, user_id, user_role)
-                logger.info(f"{plugin_name.capitalize()} plugin reply: {reply}")
-                
-                if reply:
-                    self.bot.send_message(message.chat.id, reply, parse_mode="Markdown")
+                try:
+                    reply = plugin.handle_command(cmd, args, user_id, user_role)
+                    logger.info(f"{plugin_name.capitalize()} plugin reply: {reply}")
+                    
+                    if reply:
+                        try:
+                            self.bot.send_message(message.chat.id, reply, parse_mode="Markdown")
+                        except Exception as parse_error:
+                            # If Markdown parsing fails, try without formatting
+                            logger.warning(f"Markdown parse error, sending plain text: {parse_error}")
+                            self.bot.send_message(message.chat.id, reply)
+                except Exception as e:
+                    logger.error(f"Error executing {plugin_name} command: {e}", exc_info=True)
+                    self.bot.send_message(message.chat.id, "⚠️ An error occurred while processing your command.")
             else:
                 logger.warning(f"{plugin_name.capitalize()} plugin is not active.")
+                # Use generic message - don't reveal plugin state
+                self.bot.send_message(message.chat.id, security_message)
         else:
             logger.warning(f"{plugin_name.capitalize()} plugin not found in bot.plugins.")
+            # Use generic message - don't reveal plugin existence
+            self.bot.send_message(message.chat.id, security_message)
+
+    def _check_plugin_access(self, user_role, allowed_roles):
+        """
+        Check if user_role is allowed based on allowed_roles list.
+        
+        Args:
+            user_role: User's current role (e.g., "user", "admin", "superadmin")
+            allowed_roles: List of allowed roles for the plugin
+            
+        Returns:
+            bool: True if user has access, False otherwise
+        """
+        if not allowed_roles:
+            return False
+        
+        # If "all" is in allowed_roles, everyone has access
+        if "all" in allowed_roles:
+            return True
+        
+        # Role hierarchy: superadmin > admin > user
+        role_hierarchy = {"user": 1, "admin": 2, "superadmin": 3}
+        
+        user_level = role_hierarchy.get(user_role, 0)
+        
+        # Check if user's role is in allowed_roles or higher
+        for allowed_role in allowed_roles:
+            allowed_level = role_hierarchy.get(allowed_role.lower(), 0)
+            if user_level >= allowed_level:
+                return True
+        
+        return False
 
     def _handle_llm_plugin_command(self, message):
         """Handle LLM plugin commands if active. (Legacy - kept for compatibility)"""
@@ -290,6 +397,9 @@ class MessageHandler:
 
     def _handle_command(self, message) -> None:
         """Process commands with role checking."""
+        import logging
+        logger = logging.getLogger("command_handler")
+        
         parts = (message.text or "").split()
         if not parts:
             return
@@ -298,23 +408,25 @@ class MessageHandler:
         if '@' in command:  # Handle commands like /help@botname
             command = command.split('@')[0]
 
+        user_id = message.from_user.id
+        
+        # Generic security message - same for non-existent commands and unauthorized access
+        security_message = "⚠️ This command either doesn't exist or you don't have permission to use it."
+        
         if command not in self.command_registry:
-            import logging
-            logger = logging.getLogger("llm_plugin_command")
-            logger.warning(f"Command '{command}' not found in registry. Registered commands: {list(self.command_registry.keys())}")
+            logger.warning(f"Command '{command}' not found in registry. User: {user_id}")
+            # Don't reveal if command exists or not
+            self.bot.send_message(message.chat.id, security_message)
             return
 
         # Check permissions
-        user_id = message.from_user.id
         required_role = self.command_registry[command]['role']
         
         # Skip permission check if command has no role requirement
         if required_role is not None and not self.access_control.has_role(user_id, required_role):
-            logger.warning(f"Access denied: {user_id} tried /{command} needing {required_role}")
-            self.bot.send_message(
-                message.chat.id,
-                "🚫 You don't have permission to use this command."
-            )
+            logger.warning(f"Access denied: {user_id} tried /{command} (requires {required_role})")
+            # Use same generic message to avoid revealing command existence
+            self.bot.send_message(message.chat.id, security_message)
             return
 
         # Execute handler
@@ -384,14 +496,13 @@ class MessageHandler:
         except ValueError:
             user_level = 0
 
-        user_cmds = ["start", "help", "info", "stop"]
+        user_cmds = ["start", "help", "info"]
         admin_cmds = ["broadcast", "schedule_message", "list_scheduled", "cancel_scheduled", "settings", "set"]
         superadmin_cmds = ["promote_user", "demote_user"]
         command_descriptions = {
             "start": "/start - Start interaction",
             "help": "/help - Show this help message",
             "info": "/info - Bot info",
-            "stop": "/stop - Stop the bot from replying",
             "broadcast": "/broadcast - Send a message to all users",
             "schedule_message": "/schedule_message - Schedule a message",
             "list_scheduled": "/list_scheduled - View pending scheduled messages",
@@ -423,6 +534,11 @@ class MessageHandler:
         if hasattr(self.bot, "plugins"):
             for pname, plugin in self.bot.plugins.items():
                 if plugin.is_active() and hasattr(plugin, "commands"):
+                    # Check if user has permission to see this plugin's commands
+                    allowed_roles = getattr(plugin, "allowed_roles", ["admin", "superadmin"])
+                    if not self._check_plugin_access(user_role, allowed_roles):
+                        continue  # Skip this plugin if user doesn't have access
+                    
                     plugin_cmds = plugin.commands()
                     if plugin_cmds:
                         help_lines.append("")

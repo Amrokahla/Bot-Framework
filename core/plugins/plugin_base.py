@@ -12,6 +12,7 @@ class BasePlugin(ABC):
         self.bot = bot
         self.config = config or {}
         self.active = False
+        self.allowed_roles = ["admin", "superadmin"]  # Default to admin access
 
     @abstractmethod
     def name(self) -> str:

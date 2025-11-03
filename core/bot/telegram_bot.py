@@ -125,8 +125,6 @@ class TelegramBot:
                         self._help_handler(message)
                     elif text.startswith('/info'):
                         self._info_handler(message)
-                    elif text.startswith('/stop') or text.startswith('/exit'):
-                        self._stop_handler(message)
                 else:
                     self._default_media_handler(message)
 
@@ -144,10 +142,7 @@ class TelegramBot:
 
             # --- Handle blocked users ---
             if user_id in self.blocked_users:
-                if text.strip().lower() not in ['/stop', '/exit']:
-                    return
-                else:
-                    self.blocked_users.remove(user_id)
+                return  # Silently ignore blocked users
 
             # --- Private messages ---
             if chat_type == "private":
@@ -226,12 +221,6 @@ class TelegramBot:
         lang = self.admin_tools.settings_manager.get("language") or "en"
         self.send_message(message.chat.id,
                           f"🤖 Bot: @{self.username}\n🌍 Timezone: {tz}\n🌐 Language: {lang}\n👮 Admins: {len(self.admins)}")
-
-    def _stop_handler(self, message):
-        user_id = message.from_user.id
-        self.blocked_users.add(user_id)
-        self.db.set_user_blocked(user_id, True)
-        self.send_message(message.chat.id, "You’ve been blocked from further interactions. Use /start to re-enable.")
 
     def _default_media_handler(self, message):
         return self.send_message(message.chat.id, "This bot doesn’t handle media yet.")
