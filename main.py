@@ -47,6 +47,13 @@ def main():
                         plugin.manager.llm.provider = plugin_cfg["provider"]
                     if "model_name" in plugin_cfg:
                         plugin.manager.llm.model_name = plugin_cfg["model_name"]
+                elif pname == "weather":
+                    if "api_key" in plugin_cfg:
+                        plugin.api_key = plugin_cfg["api_key"]
+                        plugin.weather_api.api_key = plugin_cfg["api_key"]
+                    if "provider" in plugin_cfg:
+                        plugin.provider = plugin_cfg["provider"]
+                        plugin.weather_api.provider = plugin_cfg["provider"]
                 # For other plugins, pass config as needed
                 # Example: plugin.load_config(plugin_cfg)
         # Now, activate plugins after config is set

@@ -9,9 +9,12 @@ class MessageHandler:
     def add_plugin_commands(self, plugin):
         """Register commands from a single plugin after activation."""
         if plugin.is_active() and hasattr(plugin, "commands"):
+            plugin_name = plugin.name()
             for cmd, desc in plugin.commands().items():
                 cmd_name = cmd.lstrip("/").lower()
-                self.register_command(cmd_name, self._handle_llm_plugin_command, "admin")
+                # Create a handler that routes to the correct plugin
+                handler = self._create_plugin_command_handler(plugin_name)
+                self.register_command(cmd_name, handler, "admin")
     """
     Core message routing and command handling system.
     Manages command registration and role-based access control.
@@ -32,7 +35,9 @@ class MessageHandler:
                 if pname in active_plugins and plugin.is_active() and hasattr(plugin, "commands"):
                     for cmd, desc in plugin.commands().items():
                         cmd_name = cmd.lstrip("/").lower()
-                        self.register_command(cmd_name, self._handle_llm_plugin_command, "admin")
+                        # Create a handler that routes to the correct plugin
+                        handler = self._create_plugin_command_handler(pname)
+                        self.register_command(cmd_name, handler, "admin")
 
     def _register_plugin_commands(self):
         """Register commands from active plugins (e.g., LLM) after activation."""
@@ -42,7 +47,9 @@ class MessageHandler:
                 if pname in active_plugins and plugin.is_active() and hasattr(plugin, "commands"):
                     for cmd, desc in plugin.commands().items():
                         cmd_name = cmd.lstrip("/").lower()
-                        self.register_command(cmd_name, self._handle_llm_plugin_command, "admin")
+                        # Create a handler that routes to the correct plugin
+                        handler = self._create_plugin_command_handler(pname)
+                        self.register_command(cmd_name, handler, "admin")
 
     def _register_system_commands(self):
         """Register built-in system commands."""
@@ -62,15 +69,16 @@ class MessageHandler:
             self.register_command("cancel_scheduled", self.bot.admin_tools._cancel_scheduled_handler, "admin")
             self.register_command("settings", self.bot.admin_tools.show_settings, "admin")
             self.register_command("set", self.bot.admin_tools.set_setting, "admin")
-        # Register plugin commands if LLM plugin is active and in active_plugins
+        # Register plugin commands if plugins are active and in active_plugins
         active_plugins = getattr(self.bot, "active_plugins", [])
-        if hasattr(self.bot, "plugins") and "llm" in self.bot.plugins and "llm" in active_plugins:
-            llm_plugin = self.bot.plugins["llm"]
-            if llm_plugin.is_active() and hasattr(llm_plugin, "commands"):
-                for cmd, desc in llm_plugin.commands().items():
-                    cmd_name = cmd.lstrip("/").lower()
-                    # Register for both admin and superadmin (admin covers both)
-                    self.register_command(cmd_name, self._handle_llm_plugin_command, "admin")
+        if hasattr(self.bot, "plugins"):
+            for pname, plugin in self.bot.plugins.items():
+                if pname in active_plugins and plugin.is_active() and hasattr(plugin, "commands"):
+                    for cmd, desc in plugin.commands().items():
+                        cmd_name = cmd.lstrip("/").lower()
+                        # Create a handler that routes to the correct plugin
+                        handler = self._create_plugin_command_handler(pname)
+                        self.register_command(cmd_name, handler, "admin")
 
     def _cmd_promote_user(self, message) -> None:
         """Promote a user to a higher role. Usage: /promote_user <user_id> <role>"""
@@ -242,28 +250,43 @@ class MessageHandler:
             logger.error(f"Error handling message: {e}", exc_info=True)
             self._send_error_message(message.chat.id)
 
-    def _handle_llm_plugin_command(self, message):
-        """Handle LLM plugin commands if active."""
+    def _create_plugin_command_handler(self, plugin_name):
+        """Create a command handler for a specific plugin."""
+        def handler(message):
+            self._handle_plugin_command(message, plugin_name)
+        return handler
+
+    def _handle_plugin_command(self, message, plugin_name):
+        """Handle plugin commands and route to the correct plugin."""
         import logging
-        logger = logging.getLogger("llm_plugin_command")
-        logger.info(f"Received LLM plugin command: {message.text}")
-        if hasattr(self.bot, "plugins") and "llm" in self.bot.plugins:
-            llm_plugin = self.bot.plugins["llm"]
-            logger.info(f"LLM plugin active: {llm_plugin.is_active()}")
-            if llm_plugin.is_active():
+        logger = logging.getLogger(f"{plugin_name}_plugin_command")
+        logger.info(f"Received {plugin_name} plugin command: {message.text}")
+        
+        if hasattr(self.bot, "plugins") and plugin_name in self.bot.plugins:
+            plugin = self.bot.plugins[plugin_name]
+            logger.info(f"{plugin_name.capitalize()} plugin active: {plugin.is_active()}")
+            
+            if plugin.is_active():
                 parts = (message.text or "").split()
                 cmd = parts[0][1:].lower()
                 args = parts[1:]
                 user_id = message.from_user.id
                 user_role = self.access_control.role_manager.get_role(user_id)
                 logger.info(f"Routing command '{cmd}' with args {args} from user {user_id} (role: {user_role})")
-                reply = llm_plugin.handle_command(cmd, args, user_id, user_role)
-                logger.info(f"LLM plugin reply: {reply}")
-                self.bot.send_message(message.chat.id, reply)
+                
+                reply = plugin.handle_command(cmd, args, user_id, user_role)
+                logger.info(f"{plugin_name.capitalize()} plugin reply: {reply}")
+                
+                if reply:
+                    self.bot.send_message(message.chat.id, reply, parse_mode="Markdown")
             else:
-                logger.warning("LLM plugin is not active.")
+                logger.warning(f"{plugin_name.capitalize()} plugin is not active.")
         else:
-            logger.warning("LLM plugin not found in bot.plugins.")
+            logger.warning(f"{plugin_name.capitalize()} plugin not found in bot.plugins.")
+
+    def _handle_llm_plugin_command(self, message):
+        """Handle LLM plugin commands if active. (Legacy - kept for compatibility)"""
+        self._handle_plugin_command(message, "llm")
 
     def _handle_command(self, message) -> None:
         """Process commands with role checking."""
